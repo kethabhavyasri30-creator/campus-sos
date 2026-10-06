@@ -25,34 +25,85 @@ export default function LocationSelector({
   const [gpsError, setGpsError] = useState(null);
 
   useEffect(() => {
-    if (!gpsCoords) {
-      requestPreciseLocation();
+    let watchId;
+    const startTracking = () => {
+      if (!navigator.geolocation) {
+        fallbackToIpLocation('Geolocation is not supported by your browser.');
+        return;
+      }
+      setIsLocating(true);
+      
+      // LIVE TRACKING: Watch position instead of getting it just once
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          setGpsCoords((prev) => {
+            // Don't override if user dragged pin manually
+            if (prev && prev.manual) return prev; 
+            return {
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+              accuracy: position.coords.accuracy,
+              manual: false
+            };
+          });
+          setIsLocating(false);
+          setGpsError(null);
+        },
+        (error) => {
+          fallbackToIpLocation('GPS signal not found or permission denied. Using estimated location.');
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    };
+
+    if (!gpsCoords || !gpsCoords.manual) {
+      startTracking();
     }
+
+    return () => {
+      if (watchId) navigator.geolocation.clearWatch(watchId);
+    };
   }, []);
 
-  const requestPreciseLocation = () => {
-    setIsLocating(true);
-    setGpsError(null);
-    if (!navigator.geolocation) {
-      setGpsError('Geolocation is not supported by your browser.');
-      setIsLocating(false);
-      return;
+  const fallbackToIpLocation = async (errorMsg) => {
+    try {
+      const res = await fetch('https://ipapi.co/json/');
+      const data = await res.json();
+      if (data.latitude && data.longitude) {
+        setGpsCoords({
+          lat: data.latitude,
+          lng: data.longitude,
+          accuracy: 5000, 
+          manual: false
+        });
+        setGpsError(errorMsg);
+      } else {
+        setGpsError(errorMsg + ' Could not fetch estimated location either.');
+      }
+    } catch (e) {
+      setGpsError(errorMsg);
     }
+    setIsLocating(false);
+  };
 
+  const requestPreciseLocation = () => {
+    setGpsCoords(null);
+    setGpsError(null);
+    setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
       (position) => {
         setGpsCoords({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
-          accuracy: position.coords.accuracy
+          accuracy: position.coords.accuracy,
+          manual: false
         });
         setIsLocating(false);
       },
       (error) => {
-        setGpsError('Could not fetch precise GPS location. Please ensure location permissions are enabled.');
-        setIsLocating(false);
+        fallbackToIpLocation('GPS failed. Using estimated location.');
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
 
@@ -116,9 +167,28 @@ export default function LocationSelector({
         {gpsCoords ? (
           <div className="h-40 w-full rounded-lg overflow-hidden border border-slate-700 relative z-0">
             <MapContainer center={[gpsCoords.lat, gpsCoords.lng]} zoom={18} scrollWheelZoom={false} className="h-full w-full">
-              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-              <Marker position={[gpsCoords.lat, gpsCoords.lng]}>
-                <Popup>You are within {Math.round(gpsCoords.accuracy)} meters of this point.</Popup>
+              {/* FIXED: Using Google Street Maps */}
+              <TileLayer url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}" attribution="&copy; Google Maps" />
+              <Marker 
+                position={[gpsCoords.lat, gpsCoords.lng]}
+                draggable={true}
+                eventHandlers={{
+                  dragend: (e) => {
+                    const marker = e.target;
+                    const position = marker.getLatLng();
+                    setGpsCoords({
+                      lat: position.lat,
+                      lng: position.lng,
+                      accuracy: gpsCoords.accuracy || 10,
+                      manual: true
+                    });
+                  },
+                }}
+              >
+                <Popup>
+                  {gpsCoords.manual ? 'Manually adjusted location.' : `Within ${Math.round(gpsCoords.accuracy)} meters.`}
+                  <br/><span className="text-[10px] text-slate-500">(Drag pin to correct if wrong)</span>
+                </Popup>
               </Marker>
               <MapUpdater center={[gpsCoords.lat, gpsCoords.lng]} />
             </MapContainer>
