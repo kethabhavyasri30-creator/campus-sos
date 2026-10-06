@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /emergencies/{emergencyId} {
+
+      function data()      { return request.resource.data; }
+      function teamFor(t)  {
+        return {
+          'Medical':  'Medical Team',
+          'Fire':     'Fire Response Team',
+          'Security': 'Security Team',
+          'Accident': 'Medical + Security Team',
+          'Other':    'Security Team'
+        }[t];
+      }
+      function isStr(v, min, max) { return v is string && v.size() >= min && v.size() <= max; }
+
+      allow read: if true;
+
+      allow create: if
+           data().keys().hasOnly(['id','studentName','studentId','emergencyType','location',
+                                  'description','gpsCoords','status','assignedTeam','createdAt',
+                                  'respondedAt','resolvedAt'])
+        && data().keys().hasAll(['id','studentName','studentId','emergencyType','location',
+                                 'description','gpsCoords','status','assignedTeam','createdAt',
+                                 'respondedAt','resolvedAt'])
+        && data().id == emergencyId
+        && data().emergencyType in ['Medical','Fire','Security','Accident','Other']
+        && data().assignedTeam == teamFor(data().emergencyType)
+        && data().status == 'Active'
+        && data().createdAt == request.time
+        && data().respondedAt == null
+        && data().resolvedAt == null
+        && isStr(data().studentName, 1, 100)
+        && isStr(data().studentId, 1, 40)
+        && isStr(data().location, 1, 140)
+        && isStr(data().description, 0, 1000)
+        && (data().gpsCoords == null || (data().gpsCoords is map && data().gpsCoords.keys().hasAll(['lat', 'lng', 'accuracy'])));
+
+      allow update: if
+           data().diff(resource.data).affectedKeys().hasOnly(['status','respondedAt','resolvedAt'])
+        && (
+             // Active -> Responding
+             (resource.data.status == 'Active'
+               && data().status == 'Responding'
+               && data().respondedAt == request.time
+               && data().resolvedAt == null)
+          || // Active|Responding -> Resolved
+             (resource.data.status in ['Active','Responding']
+               && data().status == 'Resolved'
+               && data().resolvedAt == request.time
+               && data().respondedAt == resource.data.respondedAt)
+        );
+
+      allow delete: if false;
+    }
+
+    match /users/{userId} {
+      // Allow reading user profiles to authenticate
+      allow read, write: if true;
+    }
+
+    match /{document=**} { allow read, write: if false; }
+  }
+}
