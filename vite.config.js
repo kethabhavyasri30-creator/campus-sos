@@ -7,10 +7,10 @@ export default defineConfig({
   server: {
     port: 3000,
     open: false,
-    // Forward /api calls to the alert server so the siren works in dev mode too
     proxy: { '/api': 'http://localhost:4000' },
   },
   build: {
+    chunkSizeWarningLimit: 1500, // <--- ADD THIS LINE to fix the warning
     rollupOptions: {
       output: {
         manualChunks: {
