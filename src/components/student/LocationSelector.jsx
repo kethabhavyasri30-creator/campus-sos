@@ -24,6 +24,13 @@ export default function LocationSelector({
   const [isLocating, setIsLocating] = useState(false);
   const [gpsError, setGpsError] = useState(null);
 
+  const getErrorReason = (error) => {
+    if (error.code === 1) return "Permission Denied by Browser";
+    if (error.code === 2) return "Position Unavailable (No GPS signal/Wi-Fi blocked)";
+    if (error.code === 3) return "Timeout (Device took too long)";
+    return error.message || "Unknown error";
+  };
+
   useEffect(() => {
     let watchId;
     const startTracking = () => {
@@ -33,11 +40,9 @@ export default function LocationSelector({
       }
       setIsLocating(true);
       
-      // LIVE TRACKING: Watch position instead of getting it just once
       watchId = navigator.geolocation.watchPosition(
         (position) => {
           setGpsCoords((prev) => {
-            // Don't override if user dragged pin manually
             if (prev && prev.manual) return prev; 
             return {
               lat: position.coords.latitude,
@@ -50,9 +55,10 @@ export default function LocationSelector({
           setGpsError(null);
         },
         (error) => {
-          fallbackToIpLocation('GPS signal not found or permission denied. Using estimated location.');
+          console.error("GPS Watch Error:", error);
+          fallbackToIpLocation(`GPS failed: ${getErrorReason(error)}. Using estimated location.`);
         },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 } // Increased timeout to give laptops more time
       );
     };
 
@@ -78,7 +84,7 @@ export default function LocationSelector({
         });
         setGpsError(errorMsg);
       } else {
-        setGpsError(errorMsg + ' Could not fetch estimated location either.');
+        setGpsError(errorMsg + ' (IP Fallback also failed)');
       }
     } catch (e) {
       setGpsError(errorMsg);
@@ -90,6 +96,8 @@ export default function LocationSelector({
     setGpsCoords(null);
     setGpsError(null);
     setIsLocating(true);
+    
+    // Step 1: Try High Accuracy First
     navigator.geolocation.getCurrentPosition(
       (position) => {
         setGpsCoords({
@@ -101,9 +109,29 @@ export default function LocationSelector({
         setIsLocating(false);
       },
       (error) => {
-        fallbackToIpLocation('GPS failed. Using estimated location.');
+        // Step 2: If High Accuracy fails (like on a desktop), immediately try standard accuracy!
+        if (error.code === 3 || error.code === 2) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              setGpsCoords({
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude,
+                accuracy: pos.coords.accuracy,
+                manual: false
+              });
+              setIsLocating(false);
+              setGpsError("High-accuracy GPS failed. Using standard accuracy.");
+            },
+            (err2) => {
+              fallbackToIpLocation(`GPS failed completely: ${getErrorReason(err2)}`);
+            },
+            { enableHighAccuracy: false, timeout: 15000, maximumAge: 0 }
+          );
+        } else {
+          fallbackToIpLocation(`GPS failed: ${getErrorReason(error)}`);
+        }
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
@@ -167,7 +195,6 @@ export default function LocationSelector({
         {gpsCoords ? (
           <div className="h-40 w-full rounded-lg overflow-hidden border border-slate-700 relative z-0">
             <MapContainer center={[gpsCoords.lat, gpsCoords.lng]} zoom={18} scrollWheelZoom={false} className="h-full w-full">
-              {/* FIXED: Using Google Street Maps */}
               <TileLayer url="https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}" attribution="&copy; Google Maps" />
               <Marker 
                 position={[gpsCoords.lat, gpsCoords.lng]}
